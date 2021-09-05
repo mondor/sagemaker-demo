@@ -3,7 +3,9 @@ import tensorflow as tf
 import pandas as pd
 import argparse
 
-print(tf.__version__)
+JSON_CONTENT_TYPE = 'application/json'
+COLUMN_NAMES = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species']
+CLASS_NAMES = ['Iris setosa', 'Iris versicolor', 'Iris virginica']
 
 def pack_features_vector(features, labels):
     features = tf.stack(list(features.values()), axis=1)
@@ -18,30 +20,36 @@ def grad(model, inputs, targets):
     loss_value = loss(model, inputs, targets, training=True)
   return loss_value, tape.gradient(loss_value, model.trainable_variables)
 
+def create_model():
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(10, activation=tf.nn.relu, input_shape=(4,)),
+        tf.keras.layers.Dense(10, activation=tf.nn.relu),
+        tf.keras.layers.Dense(3)
+    ])
+    return model
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--epochs', type=int, default=10)
-    args = parser.parse_known_args()
+    args, unknown = parser.parse_known_args()
 
     # Sagemaker data / model directories
-    data_path = os.environ.get('SM_INPUT_DIR') if os.environ.get('SM_INPUT_DIR') else './data'
+    data_path = os.environ.get('SM_CHANNEL_TRAINING') if os.environ.get('SM_CHANNEL_TRAINING') else './data'
     model_path = os.environ.get('SM_MODEL_DIR') if os.environ.get('SM_MODEL_DIR') else './model'
 
+    # visualise data
     train_dataset_fp = f'{data_path}/iris_training.csv'
     df = pd.read_csv(train_dataset_fp)
     print(df.head())
 
-
-    column_names = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species']
-    class_names = ['Iris setosa', 'Iris versicolor', 'Iris virginica']
-    feature_names = column_names[:-1]
-    label_names = column_names[-1]
+    feature_names = COLUMN_NAMES[:-1]
+    label_names = COLUMN_NAMES[-1]
 
     # create dataset
     train_dataset = tf.data.experimental.make_csv_dataset(
         train_dataset_fp,
         batch_size=32,
-        column_names=['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species'],
+        column_names=COLUMN_NAMES,
         label_name=label_names,
         num_epochs=1
     )
@@ -49,11 +57,7 @@ if __name__ == '__main__':
     train_dataset = train_dataset.map(pack_features_vector)
 
     # simple model
-    model = tf.keras.Sequential([
-        tf.keras.layers.Dense(10, activation=tf.nn.relu, input_shape=(4,)),
-        tf.keras.layers.Dense(10, activation=tf.nn.relu),
-        tf.keras.layers.Dense(3)
-    ])
+    model = create_model()
     model.summary()
 
     # training
@@ -61,6 +65,7 @@ if __name__ == '__main__':
     optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
     train_loss_results = []
     train_accuracy_results = []
+
     for epoch in range(1, args.epochs):
         epoch_loss_avg = tf.keras.metrics.Mean()
         epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
@@ -77,6 +82,4 @@ if __name__ == '__main__':
 
         print(f"Epoch {epoch} Loss {epoch_loss_avg.result()} Accuracy {epoch_accuracy.result()}")
 
-
-    model.save_weights(f'{model_path}/iris-checkpoint')
-    model.load_weights(f'{model_path}/iris-checkpoint')
+    tf.saved_model.save(model, f'{model_path}/iris/1')
